@@ -87,12 +87,12 @@ void loop() {
                 z_pos += z_direction;
                 step_motors(x_direction, y_direction, z_direction);
             }
-
-            Serial.write(1);
         }
+
+        Serial.write(1);
     }
 
-    sleep_motors();
+    // sleep_motors();
 }
 
 void home() {
