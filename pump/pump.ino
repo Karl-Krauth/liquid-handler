@@ -73,13 +73,13 @@ void loop() {
             Wire.beginTransmission(I2C_HIGHDRIVER4_ADRESS);
             Wire.write(I2C_PVOLTAGE);
             // Pump 1
-            Wire.write(0);
+            Wire.write(constrain(voltage, 0, 31));
             // Pump 2
-            Wire.write(0);
+            Wire.write(constrain(voltage, 0, 31));
             // Pump 3
             Wire.write(constrain(voltage, 0, 31));
             // Pump 4
-            Wire.write(0);
+            Wire.write(constrain(voltage, 0, 31));
             Wire.write(0x01);
             Wire.endTransmission();
         }
