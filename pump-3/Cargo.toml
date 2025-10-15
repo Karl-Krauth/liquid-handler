@@ -10,8 +10,6 @@ path = "./src/bin/main.rs"
 
 [dependencies]
 defmt = "1.0.1"
-embassy-futures = "0.1.2"
-embassy-usb = "0.4.0"
 esp-bootloader-esp-idf = { version = "0.2.0", features = ["esp32s3"] }
 esp-hal = { version = "=1.0.0-rc.0", features = [
   "defmt",
