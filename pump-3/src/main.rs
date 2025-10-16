@@ -17,7 +17,6 @@ use esp_hal::{
     timer::timg::TimerGroup,
 };
 use panic_rtt_target as _;
-use crate::usb::Usb;
 
 extern crate alloc;
 
@@ -38,28 +37,11 @@ async fn main(spawner: Spawner) -> ! {
     spawner.spawn(server()).unwrap();
     Timer::after_secs(4).await;
 
-    let mut usb = Usb::new(peripherals.USB_DEVICE);
-    loop {
-        info!("Sending!");
-        usb.write(&[0]).await;
-        info!("Reading!");
-        let res = usb.read().await;
-        info!("Got {=[?]}", &res[..]);
-        Timer::after_secs(2).await;
-        // info!("{}", res);
-    }
+    usb::protocol_task(peripherals.USB_DEVICE).await;
 }
 
 #[embassy_executor::task]
 async fn server() -> ! {
-    loop {
-        info!("Hello from second task!");
-        Timer::after_millis(500).await;
-    }
-}
-
-#[embassy_executor::task]
-async fn task() -> ! {
     loop {
         info!("Hello from second task!");
         Timer::after_millis(500).await;

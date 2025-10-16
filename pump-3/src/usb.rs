@@ -1,13 +1,16 @@
 use alloc::{
-    string::String,
     vec,
     vec::Vec,
 };
 use core::{
-    iter,
+    result,
     slice,
 };
 use defmt::info;
+use embassy_time::{
+    Duration,
+    TimeoutError,
+};
 use embedded_io_async::{
     Read,
     Write,
@@ -20,21 +23,94 @@ use esp_hal::{
 use thiserror::Error;
 
 
-#[derive(Debug, Error)]
+#[derive(Error, Debug)]
 pub enum Error {
-    #[error("IO error")]
-    IOError(String),
+    #[error("Timeout error")]
+    Timeout,
 }
 
-pub struct Usb<'a> {
+impl From<TimeoutError> for Error {
+    fn from(_: TimeoutError) -> Self { Error::Timeout }
+}
+
+type Result<T> = result::Result<T, Error>;
+
+#[derive(Debug, Clone, Copy, DekuRead, DekuWrite)]
+#[deku(endian = "big")]
+struct RequestPacket {
+    type: u8,
+    #[deku(ctx = "*type")]
+    data: RequestPacketData,
+    crc: u8,
+}
+
+#[derive(Debug, Clone, Copy, DekuRead, DekuWrite)]
+#[deku(ctx = "endian: deku::ctx::Endian, register: u8", id = "type", endian = "endian")]
+enum RequestPacketData {
+    #[deku(id = "SENSOR_INFO_PACKET")]
+    SensorInfo,
+
+    #[deku(id = "GLOBAL_STATUS_REG")]
+    GlobalStatus(GlobalStatus),
+
+    #[deku(id = "TRANSMISSION_COUNT_REG")]
+    TransmissionCount(
+        #[deku(pad_bits_before = "24")]
+        u8
+    ),
+
+    #[deku(id = "RESPONSE_DELAY_REG")]
+    ResponseDelay(
+        #[deku(pad_bits_before = "20")]
+        #[deku(bits = "4")]
+        #[deku(pad_bits_after = "8")]
+        u8
+    ),
+}
+
+// General configuration registers.
+#[derive(Debug, Clone, Copy, DekuRead, DekuWrite)]
+#[deku(ctx = "endian: deku::ctx::Endian", endian = "endian")]
+struct SensorInfo {
+    #[deku(pad_bits_before = "22")]
+    #[deku(bits = 1)]
+    test_mode: bool,
+    #[deku(bits = 1)]
+    filter_step_pulses: bool,
+    #[deku(bits = 1)]
+    uart_selects_microsteps: bool,
+    #[deku(bits = 1)]
+    pin_uart_mode: bool,
+    index_output: IndexOutput,
+    #[deku(bits = 1)]
+    invert_direction: bool,
+    #[deku(bits = 1)]
+    disable_pwm: bool,
+    #[deku(bits = 1)]
+    internal_sense_resistor: bool,
+    #[deku(bits = 1)]
+    external_current_scaling: bool,
+}
+
+pub async fn protocol_task(device: USB_DEVICE<'_>) -> ! {
+    let mut stream = PacketStream::new(device, Duration::from_secs(1));
+    loop {
+        let packet = stream.read().await.unwrap();
+        info!("Received packet: {=[?]}", &packet[..]);
+        stream.write(&packet).await;
+    }
+}
+
+pub struct PacketStream<'a> {
     usb: UsbSerialJtag<'a, Async>,
+    timeout: Duration,
 }
 
-impl<'a> Usb<'a> {
-    pub fn new(device: USB_DEVICE<'a>) -> Self {
-        let mut usb = UsbSerialJtag::new(device);
-        Usb {
-            usb: usb.into_async(),
+impl<'a> PacketStream<'a> {
+    pub fn new(device: USB_DEVICE<'a>, timeout: Duration) -> Self {
+        PacketStream {
+            usb: UsbSerialJtag::new(device).into_async(),
+            timeout,
         }
     }
 
@@ -69,10 +145,10 @@ impl<'a> Usb<'a> {
         Write::write_all(&mut self.usb, &out).await.unwrap()
     }
 
-    pub async fn read(&mut self) -> Vec<u8> {
+    pub async fn read(&mut self) -> Result<Vec<u8>> {
         let mut size = 0;
         while size == 0 {
-            size = self.read_byte().await;
+            size = self.read_byte().await?;
             info!("Read zero byte");
         }
 
@@ -81,23 +157,25 @@ impl<'a> Usb<'a> {
             let l = vec.len();
             vec.resize(l + size as usize - 1, 0);
             info!("Reading {} bytes", size);
-            Read::read_exact(&mut self.usb, &mut vec[l..]).await.unwrap();
-            size = self.read_byte().await;
+            embassy_time::with_timeout(
+                self.timeout,
+                Read::read_exact(&mut self.usb, &mut vec[l..]),
+            ).await?.unwrap();
+            size = self.read_byte().await?;
             match size {
-                0 => break vec,
+                0 => break Ok(vec),
                 255 => continue,
                 _ => vec.push(0),
             }
         }
     }
 
-    async fn read_byte(&mut self) -> u8 {
+    async fn read_byte(&mut self) -> Result<u8> {
         let mut byte = 0u8;
-        Read::read_exact(&mut self.usb, slice::from_mut(&mut byte)).await.unwrap();
-        byte
-    }
-
-    async fn write_byte(&mut self, byte: u8) {
-        Write::write_all(&mut self.usb, &[byte]).await.unwrap();
+        embassy_time::with_timeout(
+            self.timeout,
+            Read::read_exact(&mut self.usb, slice::from_mut(&mut byte)),
+        ).await?.unwrap();
+        Ok(byte)
     }
 }
