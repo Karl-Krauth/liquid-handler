@@ -6,7 +6,14 @@ use core::{
     result,
     slice,
 };
-use defmt::info;
+use defmt::{
+    Format,
+    info,
+};
+use deku::{
+    ctx::BitSize,
+    prelude::*,
+};
 use embassy_time::{
     Duration,
     TimeoutError,
@@ -35,61 +42,43 @@ impl From<TimeoutError> for Error {
 
 type Result<T> = result::Result<T, Error>;
 
-#[derive(Debug, Clone, Copy, DekuRead, DekuWrite)]
-#[deku(endian = "big")]
-struct RequestPacket {
-    type: u8,
-    #[deku(ctx = "*type")]
-    data: RequestPacketData,
-    crc: u8,
+// Request/response codes.
+const FLOW_SENSOR_INFO: u8 = 0x00;
+const SET_PUMP_RPM: u8 = 0x01;
+const FAIL: u8 = 0xFF;
+
+
+#[derive(Debug, Clone, Copy, DekuRead, DekuWrite, Format)]
+#[deku(id_type = "u8", endian = "big")]
+enum Request {
+    #[deku(id = "FLOW_SENSOR_INFO")]
+    FlowSensorInfo,
+
+    #[deku(id = "SET_PUMP_RPM")]
+    SetPumpRpm(f64),
 }
 
-#[derive(Debug, Clone, Copy, DekuRead, DekuWrite)]
-#[deku(ctx = "endian: deku::ctx::Endian, register: u8", id = "type", endian = "endian")]
-enum RequestPacketData {
-    #[deku(id = "SENSOR_INFO_PACKET")]
-    SensorInfo,
+#[derive(Debug, Clone, Copy, DekuRead, DekuWrite, Format)]
+#[deku(id_type = "u8", endian = "big")]
+enum Response {
+    #[deku(id = "FLOW_SENSOR_INFO")]
+    FlowSensorInfo(FlowSensorInfo),
 
-    #[deku(id = "GLOBAL_STATUS_REG")]
-    GlobalStatus(GlobalStatus),
+    #[deku(id = "SET_PUMP_RPM")]
+    SetPumpRpm,
 
-    #[deku(id = "TRANSMISSION_COUNT_REG")]
-    TransmissionCount(
-        #[deku(pad_bits_before = "24")]
-        u8
-    ),
-
-    #[deku(id = "RESPONSE_DELAY_REG")]
-    ResponseDelay(
-        #[deku(pad_bits_before = "20")]
-        #[deku(bits = "4")]
-        #[deku(pad_bits_after = "8")]
-        u8
-    ),
+    #[deku(id = "FAIL")]
+    Fail,
 }
 
-// General configuration registers.
-#[derive(Debug, Clone, Copy, DekuRead, DekuWrite)]
+#[derive(Debug, Clone, Copy, DekuRead, DekuWrite, Format)]
 #[deku(ctx = "endian: deku::ctx::Endian", endian = "endian")]
-struct SensorInfo {
-    #[deku(pad_bits_before = "22")]
-    #[deku(bits = 1)]
-    test_mode: bool,
-    #[deku(bits = 1)]
-    filter_step_pulses: bool,
-    #[deku(bits = 1)]
-    uart_selects_microsteps: bool,
-    #[deku(bits = 1)]
-    pin_uart_mode: bool,
-    index_output: IndexOutput,
-    #[deku(bits = 1)]
-    invert_direction: bool,
-    #[deku(bits = 1)]
-    disable_pwm: bool,
-    #[deku(bits = 1)]
-    internal_sense_resistor: bool,
-    #[deku(bits = 1)]
-    external_current_scaling: bool,
+struct FlowSensorInfo {
+    air_in_line: bool,
+    high_flow: bool,
+    exponential_smoothing_active: bool,
+    ul_per_min: f64,
+    degrees_c: f64,
 }
 
 pub async fn protocol_task(device: USB_DEVICE<'_>) -> ! {
@@ -97,7 +86,22 @@ pub async fn protocol_task(device: USB_DEVICE<'_>) -> ! {
     loop {
         let packet = stream.read().await.unwrap();
         info!("Received packet: {=[?]}", &packet[..]);
-        stream.write(&packet).await;
+        let response = if let Ok((_, packet)) = Request::from_bytes((&packet, 0)) {
+           match packet {
+                Request::FlowSensorInfo => Response::FlowSensorInfo(FlowSensorInfo{
+                    air_in_line: false,
+                    high_flow: true,
+                    exponential_smoothing_active: false,
+                    ul_per_min: 100.32,
+                    degrees_c: 33.1,
+                }),
+                Request::SetPumpRpm(rpm) => Response::SetPumpRpm,
+            }
+        } else {
+            Response::Fail
+        };
+
+        stream.write(&response.to_bytes().unwrap()).await;
     }
 }
 
