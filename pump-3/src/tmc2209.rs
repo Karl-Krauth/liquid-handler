@@ -1019,7 +1019,7 @@ impl<'a> Tmc2209<'a> {
             2.0
         };
         let target_v = target_rpm / 60.0;
-        let a = libm::pow(accel_rpm2 / 60.0, 2.0);
+        let a = accel_rpm2 / 3600.0;
         let mut v = 0.0;
         let mut t = 0.01;
         let temp = 1.0 / (pulses_per_mstep * msteps_per_step * self.steps_per_rev * target_v);
