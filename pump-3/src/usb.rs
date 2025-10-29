@@ -1,7 +1,7 @@
 use alloc::{vec, vec::Vec};
 use core::{result, slice};
 use defmt::{info, Format};
-use deku::{ctx::BitSize, prelude::*};
+use deku::prelude::*;
 use embassy_time::{Duration, TimeoutError};
 use embedded_io_async::{Read, Write};
 use esp_hal::{peripherals::USB_DEVICE, usb_serial_jtag::UsbSerialJtag, Async};
@@ -113,7 +113,7 @@ impl<'a> PacketStream<'a> {
     }
 
     pub async fn write(&mut self, data: &[u8]) {
-        if data.len() == 0 {
+        if data.is_empty() {
             return;
         }
 
@@ -161,7 +161,7 @@ impl<'a> PacketStream<'a> {
             .await?
             .unwrap();
             // Check for unexpected zero bytes.
-            if vec[l..].iter().any(|&b| b == 0) {
+            if vec[l..].contains(&0) {
                 let mut byte = 1;
                 while byte != 0 {
                     byte = self.read_byte().await.unwrap();
