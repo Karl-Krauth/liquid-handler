@@ -45,14 +45,18 @@ impl From<TimeoutError> for Error {
 type Result<T> = result::Result<T, Error>;
 
 // Request/response codes.
-const FLOW_SENSOR_INFO: u8 = 0x00;
-const SET_PUMP_RPM: u8 = 0x01;
+const INIT: u8 = 0x00;
+const FLOW_SENSOR_INFO: u8 = 0x01;
+const SET_PUMP_RPM: u8 = 0x02;
 const FAIL: u8 = 0xFF;
 
 
 #[derive(Debug, Clone, Copy, DekuRead, DekuWrite, Format)]
 #[deku(id_type = "u8", endian = "big")]
 enum Request {
+    #[deku(id = "INIT")]
+    Init,
+
     #[deku(id = "FLOW_SENSOR_INFO")]
     FlowSensorInfo,
 
@@ -63,6 +67,9 @@ enum Request {
 #[derive(Debug, Clone, Copy, DekuRead, DekuWrite, Format)]
 #[deku(id_type = "u8", endian = "big")]
 enum Response {
+    #[deku(id = "INIT")]
+    Init,
+
     #[deku(id = "FLOW_SENSOR_INFO")]
     FlowSensorInfo(FlowSensorInfo),
 
@@ -92,6 +99,7 @@ pub async fn protocol_task(device: USB_DEVICE<'_>) -> ! {
         info!("Received packet: {=[?]}", &packet[..]);
         let response = if let Ok((_, packet)) = Request::from_bytes((&packet, 0)) {
            match packet {
+                Request::Init => Response::Init,
                 Request::FlowSensorInfo => Response::FlowSensorInfo(FlowSensorInfo {
                     air_in_line: false,
                     high_flow: true,
