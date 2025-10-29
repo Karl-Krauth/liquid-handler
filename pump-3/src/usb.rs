@@ -34,6 +34,8 @@ use thiserror::Error;
 pub enum Error {
     #[error("Timeout error")]
     Timeout,
+    #[error("Received unexpected zero byte")]
+    ZeroByte,
 }
 
 impl From<TimeoutError> for Error {
@@ -84,11 +86,13 @@ struct FlowSensorInfo {
 pub async fn protocol_task(device: USB_DEVICE<'_>) -> ! {
     let mut stream = PacketStream::new(device, Duration::from_secs(1));
     loop {
-        let packet = stream.read().await.unwrap();
+        let Ok(packet) = stream.read().await else {
+            continue;
+        };
         info!("Received packet: {=[?]}", &packet[..]);
         let response = if let Ok((_, packet)) = Request::from_bytes((&packet, 0)) {
            match packet {
-                Request::FlowSensorInfo => Response::FlowSensorInfo(FlowSensorInfo{
+                Request::FlowSensorInfo => Response::FlowSensorInfo(FlowSensorInfo {
                     air_in_line: false,
                     high_flow: true,
                     exponential_smoothing_active: false,
@@ -101,6 +105,7 @@ pub async fn protocol_task(device: USB_DEVICE<'_>) -> ! {
             Response::Fail
         };
 
+        info!("Sending response: {=[?]}", &response.to_bytes().unwrap()[..]);
         stream.write(&response.to_bytes().unwrap()).await;
     }
 }
@@ -146,17 +151,17 @@ impl<'a> PacketStream<'a> {
         }
 
 
+        info!("Sending response: {=[?]}", &out[..]);
         Write::write_all(&mut self.usb, &out).await.unwrap()
     }
 
     pub async fn read(&mut self) -> Result<Vec<u8>> {
-        let mut size = 0;
-        while size == 0 {
-            size = self.read_byte().await?;
-            info!("Read zero byte");
+        let mut size = self.read_byte().await.unwrap();
+        let mut vec = Vec::new();
+        if size == 0 {
+            return Ok(vec);
         }
 
-        let mut vec = Vec::new();
         loop {
             let l = vec.len();
             vec.resize(l + size as usize - 1, 0);
@@ -165,6 +170,15 @@ impl<'a> PacketStream<'a> {
                 self.timeout,
                 Read::read_exact(&mut self.usb, &mut vec[l..]),
             ).await?.unwrap();
+            // Check for unexpected zero bytes.
+            if vec[l..].iter().any(|&b| b == 0) {
+                let mut byte = 1;
+                while byte != 0 {
+                    byte = self.read_byte().await.unwrap();
+                }
+                break Err(Error::ZeroByte);
+            }
+
             size = self.read_byte().await?;
             match size {
                 0 => break Ok(vec),
@@ -176,10 +190,7 @@ impl<'a> PacketStream<'a> {
 
     async fn read_byte(&mut self) -> Result<u8> {
         let mut byte = 0u8;
-        embassy_time::with_timeout(
-            self.timeout,
-            Read::read_exact(&mut self.usb, slice::from_mut(&mut byte)),
-        ).await?.unwrap();
+        Read::read_exact(&mut self.usb, slice::from_mut(&mut byte)).await.unwrap();
         Ok(byte)
     }
 }
