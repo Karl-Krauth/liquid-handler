@@ -1,34 +1,11 @@
-use alloc::{
-    vec,
-    vec::Vec,
-};
-use core::{
-    result,
-    slice,
-};
-use defmt::{
-    Format,
-    info,
-};
-use deku::{
-    ctx::BitSize,
-    prelude::*,
-};
-use embassy_time::{
-    Duration,
-    TimeoutError,
-};
-use embedded_io_async::{
-    Read,
-    Write,
-};
-use esp_hal::{
-    Async,
-    peripherals::USB_DEVICE,
-    usb_serial_jtag::UsbSerialJtag,
-};
+use alloc::{vec, vec::Vec};
+use core::{result, slice};
+use defmt::{info, Format};
+use deku::{ctx::BitSize, prelude::*};
+use embassy_time::{Duration, TimeoutError};
+use embedded_io_async::{Read, Write};
+use esp_hal::{peripherals::USB_DEVICE, usb_serial_jtag::UsbSerialJtag, Async};
 use thiserror::Error;
-
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -39,7 +16,9 @@ pub enum Error {
 }
 
 impl From<TimeoutError> for Error {
-    fn from(_: TimeoutError) -> Self { Error::Timeout }
+    fn from(_: TimeoutError) -> Self {
+        Error::Timeout
+    }
 }
 
 type Result<T> = result::Result<T, Error>;
@@ -49,7 +28,6 @@ const INIT: u8 = 0x00;
 const FLOW_SENSOR_INFO: u8 = 0x01;
 const SET_PUMP_RPM: u8 = 0x02;
 const FAIL: u8 = 0xFF;
-
 
 #[derive(Debug, Clone, Copy, DekuRead, DekuWrite, Format)]
 #[deku(id_type = "u8", endian = "big")]
@@ -98,7 +76,7 @@ pub async fn protocol_task(device: USB_DEVICE<'_>) -> ! {
         };
         info!("Received packet: {=[?]}", &packet[..]);
         let response = if let Ok((_, packet)) = Request::from_bytes((&packet, 0)) {
-           match packet {
+            match packet {
                 Request::Init => Response::Init,
                 Request::FlowSensorInfo => Response::FlowSensorInfo(FlowSensorInfo {
                     air_in_line: false,
@@ -113,7 +91,10 @@ pub async fn protocol_task(device: USB_DEVICE<'_>) -> ! {
             Response::Fail
         };
 
-        info!("Sending response: {=[?]}", &response.to_bytes().unwrap()[..]);
+        info!(
+            "Sending response: {=[?]}",
+            &response.to_bytes().unwrap()[..]
+        );
         stream.write(&response.to_bytes().unwrap()).await;
     }
 }
@@ -158,7 +139,6 @@ impl<'a> PacketStream<'a> {
             out.push(0);
         }
 
-
         info!("Sending response: {=[?]}", &out[..]);
         Write::write_all(&mut self.usb, &out).await.unwrap()
     }
@@ -177,7 +157,9 @@ impl<'a> PacketStream<'a> {
             embassy_time::with_timeout(
                 self.timeout,
                 Read::read_exact(&mut self.usb, &mut vec[l..]),
-            ).await?.unwrap();
+            )
+            .await?
+            .unwrap();
             // Check for unexpected zero bytes.
             if vec[l..].iter().any(|&b| b == 0) {
                 let mut byte = 1;
@@ -198,7 +180,9 @@ impl<'a> PacketStream<'a> {
 
     async fn read_byte(&mut self) -> Result<u8> {
         let mut byte = 0u8;
-        Read::read_exact(&mut self.usb, slice::from_mut(&mut byte)).await.unwrap();
+        Read::read_exact(&mut self.usb, slice::from_mut(&mut byte))
+            .await
+            .unwrap();
         Ok(byte)
     }
 }
